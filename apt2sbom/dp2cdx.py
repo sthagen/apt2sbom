@@ -1,26 +1,21 @@
 #!python
 
-# import json
 from apt.cache import Cache,Package,Version
-from apt.package import Record
-from socket import gethostname
 from datetime import datetime
-import re
-import json
+import re, json
 from .piplist import getpip
 from uuid import uuid4
 
 def tocyclonedx(pattern = None,dopip=False):
-    s = { }
     pkgs = [ ]
     deps = []
 
-    s["bomFormat"] = "CycloneDX"
-    s["specVersion"] = "1.3",
-    s["dataLicense"] = "CC0-1.0"
-    s["serialNumber"] = "urn:uuid" + str(uuid4())
-    s["version"] = 1
-
+    s = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.3",
+        "serialNumber": "urn:uuid:" + str(uuid4()),
+        "version": 1
+        }
     m= {
         "timestamp" : str(re.sub('\..*$','',datetime.now().isoformat())) + 'Z',
         "tools" : [ {
@@ -31,7 +26,11 @@ def tocyclonedx(pattern = None,dopip=False):
             "type" : "device",
             "name" : "ubuntu-derived-system",
             "version" : "1"
+            },
+        "licenses" : [ { "license" : {
+            "id" : "BSD-3-Clause"
             }
+        } ]
       }
     s['metadata']= m
 
@@ -49,10 +48,13 @@ def tocyclonedx(pattern = None,dopip=False):
         p['type'] = 'application'
         p["name"]=pkg.name
         v=ver.version
-        v=v.replace("~","-")
-        v=v.replace(":","-")
-        p["bomref"] = pkg.name
+# This was necessary for SPDX, probably not so for Cyclone DX
+#        v=v.replace("~","-")
+#        v=v.replace(":","-")
+        p["bom-ref"] = pkg.name
         p["version"] = ver.version
+        p["purl"] = "pkg:deb/ubuntu/" + pkg.name + "@" + ver.version +\
+            "?arch=" + ver.architecture
         p["supplier"] = { "name" : r['Maintainer'] }
         if not ver.uri == None and not ver.uri == "":
             p['supplier']['url']= [ ver.uri ]
@@ -85,12 +87,13 @@ def tocyclonedx(pattern = None,dopip=False):
             } ]
         
         if not ver.dependencies == []:
-            dep = { "ref" : p["bomref"] }
+            dep = { "ref" : p["bom-ref"] }
             dees = []
             
             for d in ver.dependencies:
                 tname=re.sub(':any$','',d[0].name)
-                if tname in cache and cache[tname].is_installed:
+                if tname in cache and cache[tname].is_installed and\
+                   not tname in dees:
                     dees.append(tname)
                                 
             if not dees == []:
@@ -106,10 +109,12 @@ def tocyclonedx(pattern = None,dopip=False):
                 if not re.match(pattern,pk['Name']):
                     continue
             p={}
-            p["name"]=pk["Name"]
+            p["name"]=pk["Name"] + ".pip"
             p['type']="application"
             p["version"] = pk["Version"]
-            p["bomref"] = pk["Name"]
+            p["purl"] = "pkg:pypi/" + re.sub('_','-',p["name"].lower()) +\
+                "@" + p["version"]
+            p["bom-ref"] = pk["Name"] + ".pip"
             p["supplier"] = {
                 "name" : pk["Author"]
                 }
