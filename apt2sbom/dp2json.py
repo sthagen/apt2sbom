@@ -1,31 +1,42 @@
 #!python
+# Copyright (c) 2022, Cisco Systems, Inc. and/or its affiliates.
+# All rights reserved.
+# See accompanying LICENSE file in apt2sbom distribution.
+"""
+Convert apt and pip information to SPDX JSON format.
+"""
 
 # import json
-from apt.cache import Cache,Package,Version
-from apt.package import Record
 from socket import gethostname
 from datetime import datetime
 import re
 import json
+from apt.cache import Cache
 from .piplist import getpip
 
 def tojson(pattern = None,dopip=False):
-    s = { }
+    """
+    Convert APT information to SPDX JSON.
+    """
+
+    sbom = { }
     cinfo = { }
     pkgs = [ ]
     pkgids = [ ]
     deps = {}
     rels = []
-    s["spdxVersion"] = "SPDX-2.2"
-    s["SPDXID"] = "SPDXRef-DOCUMENT"
-    s["dataLicense"] = "CC0-1.0"
-    cinfo["creators"] =  [ "Tool: sbomOMatic-ubuntu-1.0" ]
-    cinfo["created"] = str(re.sub('\..*$','',datetime.now().isoformat())) + 'Z'
+    sbom = {
+        "spdxVersion" : "SPDX-2.2",
+        "SPDXID" : "SPDXRef-DOCUMENT",
+        "dataLicense" : "CC0-1.0",
+        "name" : "apt2sbom-" + gethostname(),
+        "documentNamespace" : "https://" + gethostname() + "/.well-known/transparency/sbom"
+    }
+    cinfo["creators"] =  [ "Tool: apt2sbom-ubuntu-1.0" ]
+    cinfo["created"] = str(re.sub(r'..*$','',datetime.now().isoformat())) + 'Z'
 
-    s['creationInfo']= cinfo
+    sbom['creationInfo']= cinfo
 
-    s["name"] = "dpkg2spdx-" + gethostname()
-    s["documentNamespace"] = "https://" + gethostname() + "/.well-known/transparency/sbom"
 
     cache=Cache()
 
@@ -33,92 +44,90 @@ def tojson(pattern = None,dopip=False):
         if not pkg.is_installed:
             continue
         if pattern:
-            if not re.match(pattern,pkg.name): 
-               continue
+            if not re.match(pattern,pkg.name):
+                continue
         ver = pkg.installed
-        r=ver.record
-        p = { }
-        p["name"]=pkg.name
-        v=ver.version
-        v=v.replace("~","-")
-        v=v.replace(":","-")
-        p["SPDXID"] = "SPDXRef-dpkg2spdx." + pkg.name
-        pkgids.append(p["SPDXID"])
-        p["versionInfo"] = ver.version
-        p["filesAnalyzed"] = False
-        p["supplier"] = "Organization: " + r['Maintainer']
-        p["homepage"]= ver.homepage
-        h= []
+        rec_info=ver.record
+        pack = { }
+        pack["name"]=pkg.name
+        pack["SPDXID"] = "SPDXRef-apt2sbom." + pkg.name
+        pkgids.append(pack["SPDXID"])
+        pack["versionInfo"] = re.sub("[:~]","-",ver.version)
+        pack["filesAnalyzed"] = False
+        pack["supplier"] = "Organization: " + rec_info['Maintainer']
+        pack["homepage"]= ver.homepage
+        hashes= []
         try:
-            h.append({ "algorithm" : 'SHA256',
+            hashes.append({ "algorithm" : 'SHA256',
                        'checksumValue' : ver.sha256 })
-        except:
+        except SystemError:
             pass
+
         try:
-            h.append({ "algorithm" : 'SHA1',
+            hashes.append({ "algorithm" : 'SHA1',
                        'checksumValue' : ver.sha1 })
-        except:
+        except SystemError:
             pass
 
         try:
-            h.append({ "algorithm" : 'MD5',
+            hashes.append({ "algorithm" : 'MD5',
                        'checksumValue' : ver.md5 })
-        except:
+        except SystemError:
             pass
 
-        if not h == []:
-            p['checksums'] = h
+        if hashes:
+            pack['checksums'] = hashes
 
-        if not ver.uri == None:
-            p["downloadLocation"]= ver.uri
+        if ver.uri:
+            pack["downloadLocation"]= ver.uri
         else:
-            p["downloadLocation"]=  "http://spdx.org/rdf/terms#noassertion"
-        if not ver.dependencies == []:
+            pack["downloadLocation"]=  "http://spdx.org/rdf/terms#noassertion"
+        if ver.dependencies:
             deps[pkg.name] = []
-            for d in ver.dependencies:
-                tname=re.sub(':any$','',d[0].name)
+            for dep in ver.dependencies:
+                tname=re.sub(':any$','',dep[0].name)
                 if tname in cache and cache[tname].is_installed:
                     deps[pkg.name].append(tname)
             if deps[pkg.name] == []:
                 deps.pop(pkg.name)
-        p["licenseConcluded"] = "NOASSERTION"
-        p["licenseDeclared"] = "NOASSERTION"
-        p["copyrightText"] = "NOASSERTION"
-        pkgs.append(p)
+        pack["licenseConcluded"] = "NOASSERTION"
+        pack["licenseDeclared"] = "NOASSERTION"
+        pack["copyrightText"] = "NOASSERTION"
+        pkgs.append(pack)
     if dopip:
         pips = getpip()
-        for pk in pips:
+        for pip in pips:
             if pattern:
-                if not re.match(pattern,pk['Name']):
+                if not re.match(pattern,pip['Name']):
                     continue
-            p={}
-            p["name"]=pk['Name']
-            p["versionInfo"] = pk['Version']
-            p["SPDXID"] = "SPDXRef-dpkg2spdx.pip." + pk['Name']
-            p["supplier"] = "Organization: " + pk['Author'] + ' <' + pk['Author-email'] + '>'
+            pack={}
+            pack["name"]=pip['Name']
+            pack["versionInfo"] = pip['Version']
+            pack["SPDXID"] = "SPDXRef-apt2sbom.pip." + pip['Name']
+            pack["supplier"] = "Organization: " + pip['Author'] + ' <'\
+                + pip['Author-email'] + '>'
             try:
-                p["homepage"] = pk['home-page']
-            except:
+                pack["homepage"] = pip['home-page']
+            except KeyError:
                 pass
-            p["filesAnalyzed"] = False
-            p["downloadLocation"] = "http://spdx.org/rdf/terms#noassertion"
-            p["licenseConcluded"] = "NOASSERTION"
-#            try:
-#                p["licenseDeclared"] = re.sub('[() ]','-',pk['License'])
-#            except:
-            p["licenseDeclared"] = "NOASSERTION"
-            p["copyrightText"] = "NOASSERTION"
-            pkgs.append(p)
-            pkgids.append(p["SPDXID"])
+            pack["filesAnalyzed"] = False
+            pack["downloadLocation"] = "http://spdx.org/rdf/terms#noassertion"
+            pack["licenseConcluded"] = "NOASSERTION"
+            pack["licenseDeclared"] = "NOASSERTION"
+            pack["copyrightText"] = "NOASSERTION"
+            pkgs.append(pack)
+            pkgids.append(pack["SPDXID"])
 
-    s['packages'] = pkgs
-    s['documentDescribes'] = pkgids
-    for k in deps.keys():
-        for d in deps[k]:
-                r = { 'spdxElementId' : "SPDXRef-dpkg2spdx." + d,
-                      'relatedSpdxElement' : "SPDXRef-dpkg2spdx." + k,
-                      'relationshipType' : 'DEPENDENCY_OF'
-                      }
-                rels.append(r)
-    s['relationships']= rels
-    return(json.dumps(s))
+    sbom['packages'] = pkgs
+    sbom['documentDescribes'] = pkgids
+    for pname in deps:
+        for dep in deps[pname]:
+            rec_info = {
+                  'spdxElementId' : "SPDXRef-apt2sbom." + pname,
+                  'relationshipType' : 'DEPENDS_ON',
+                  'relatedSpdxElement' : "SPDXRef-apt2sbom." + dep
+            }
+            rels.append(rec_info)
+
+    sbom['relationships']= rels
+    return json.dumps(sbom)
